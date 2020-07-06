@@ -7,6 +7,7 @@
 #include <Renderers/PointCloudRenderer.h>
 #include <Renderers/PlaneRenderer.h>
 #include <Renderers/lineRenderer.h>
+#include <Renderers/FaceMeshRenderer.h>
 
 class arController{
 public:
@@ -59,6 +60,7 @@ private:
     backgroundRenderer* bg_render = nullptr;
     PointCloudRenderer* point_cloud_renderer_ = nullptr;
     PlaneRenderer* plane_renderer_ = nullptr;
+    FaceMeshRenderer* face_renderer = nullptr;
 
     //ar camera
     float transformed_uvs_[8];
@@ -83,6 +85,7 @@ private:
     std::vector<tPlane> tracked_planes;
 
     void update_and_draw_planes();
+    void update_and_draw_faces();
     void update_plane_vertices(const ArPlane& ar_plane, glm::mat4& model_mat, glm::vec3& normal_vec);
     float get_dist_to_plane(const ArPose& plane_pose, const ArPose& camera_pose);
     glm::vec3 get_plane_norm(const ArPose& plane_pose);

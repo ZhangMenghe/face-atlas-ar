@@ -20,6 +20,7 @@ SET(JNI_FILES
 #        Jnis/jui_interface.cpp
         )
 SET(RENDER_FILES
+        Renderers/FaceMeshRenderer.cpp
         Renderers/lineRenderer.cpp
         Renderers/PlaneRenderer.cpp
         Renderers/PointCloudRenderer.cpp

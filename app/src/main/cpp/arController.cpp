@@ -25,6 +25,7 @@ void arController::onViewCreated(){
     bg_render = new backgroundRenderer();
     point_cloud_renderer_ = new PointCloudRenderer();
     plane_renderer_ = new PlaneRenderer();
+    face_renderer = new FaceMeshRenderer;
 }
 
 void arController::onPause(){
@@ -47,7 +48,9 @@ void arController::onResume(void* env, void* context, void* activity){
                 return;
         }
         try {
-            ArSession_create(env, context, &ar_session_);
+            ArSessionFeature features[2] = {AR_SESSION_FEATURE_FRONT_CAMERA, AR_SESSION_FEATURE_END_OF_LIST};
+            ArSession_createWithFeatures(env, context,features, &ar_session_);
+//            ArSession_create(env, context,&ar_session_);
         } catch (const std::exception& e) {
             LOGI("===== Problem to create ar session");
             // will be executed if f() throws std::runtime_error
@@ -70,6 +73,8 @@ void arController::onResume(void* env, void* context, void* activity){
 
         ArConfig_create(ar_session_, &ar_config_);
         CHECK(ar_config_);
+
+
         ArConfig_getCloudAnchorMode(ar_session_, ar_config_, &out_cloud_anchor_mode);
         ArConfig_getFocusMode(ar_session_, ar_config_, &focus_mode);
         ArConfig_getPlaneFindingMode(ar_session_, ar_config_, &plane_finding_mode);
@@ -77,7 +82,9 @@ void arController::onResume(void* env, void* context, void* activity){
 
         ArConfig_setFocusMode(ar_session_, ar_config_, AR_FOCUS_MODE_AUTO);
         ArConfig_setUpdateMode(ar_session_, ar_config_, AR_UPDATE_MODE_LATEST_CAMERA_IMAGE);
+        ArConfig_setAugmentedFaceMode(ar_session_, ar_config_, AR_AUGMENTED_FACE_MODE_MESH3D);
         CHECK(ArSession_configure(ar_session_, ar_config_) == AR_SUCCESS);
+        ArConfig_destroy(ar_config_);
     }
 
     const ArStatus status = ArSession_resume(ar_session_);
@@ -139,29 +146,34 @@ void arController::onDraw(){
     bg_render->dirtyPrecompute();
     bg_render->Draw(transformed_uvs_);
 
-    if (camera_tracking_state != AR_TRACKING_STATE_TRACKING) return ;
+    if(camera_tracking_state == AR_TRACKING_STATE_PAUSED)
+        update_and_draw_faces();
+    else{
+        if (camera_tracking_state != AR_TRACKING_STATE_TRACKING) return ;
 
-    //update and render planes
-    update_and_draw_planes();
+        //update and render planes
+        update_and_draw_planes();
+        //update and render face mesh
 
-    // Update and render point cloud.
-    ArPointCloud* ar_point_cloud = nullptr;
-    ArStatus point_cloud_status =
-            ArFrame_acquirePointCloud(ar_session_, ar_frame_, &ar_point_cloud);
-    if (point_cloud_status == AR_SUCCESS) {
-        int32_t number_of_points = 0;
-        const float* point_cloud_data;
-        ArPointCloud_getNumberOfPoints(ar_session_, ar_point_cloud, &number_of_points);
 
-        if (number_of_points > 0) {
-            ArPointCloud_getData(ar_session_, ar_point_cloud, &point_cloud_data);
+        // Update and render point cloud.
+        ArPointCloud* ar_point_cloud = nullptr;
+        ArStatus point_cloud_status =
+                ArFrame_acquirePointCloud(ar_session_, ar_frame_, &ar_point_cloud);
+        if (point_cloud_status == AR_SUCCESS) {
+            int32_t number_of_points = 0;
+            const float* point_cloud_data;
+            ArPointCloud_getNumberOfPoints(ar_session_, ar_point_cloud, &number_of_points);
+
+            if (number_of_points > 0) {
+                ArPointCloud_getData(ar_session_, ar_point_cloud, &point_cloud_data);
+            }
+    //        if(Manager::param_bool[dvr::CHECK_AR_DRAW_POINT])
+                point_cloud_renderer_->Draw(mVP, number_of_points, point_cloud_data);
+
+            ArPointCloud_release(ar_point_cloud);
         }
-//        if(Manager::param_bool[dvr::CHECK_AR_DRAW_POINT])
-            point_cloud_renderer_->Draw(mVP, number_of_points, point_cloud_data);
-
-        ArPointCloud_release(ar_point_cloud);
     }
-
     ArPose* camera_pose = nullptr;
     ArPose_create(ar_session_, nullptr, &camera_pose);
     ArCamera_getDisplayOrientedPose(ar_session_, camera, camera_pose);
@@ -179,14 +191,46 @@ void arController::onDraw(){
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 }
+void arController::update_and_draw_faces(){
+    int32_t size = 0;
+    ArTrackableList* faces = 0;
+    ArTrackableList_create(ar_session_, &faces);
+    ArSession_getAllTrackables(ar_session_, AR_TRACKABLE_FACE, faces);
+    ArTrackableList_getSize(ar_session_, faces, &size);
+    for (int32_t i = 0; i < size; i++) {
+        int32_t v_count = 0, norm_count = 0, uv_count=0, tri_count;
+        const float* vertices = 0;
+//        const float* normals = 0;
+//        const float* uvs = 0;
+        const uint16_t* indices = 0;
+
+        ArTrackable* face = 0;
+        ArTrackableList_acquireItem(ar_session_, faces, i, &face);
+        ArAugmentedFace_getMeshVertices(ar_session_, ArAsFace(face), &vertices, &v_count);
+//        ArAugmentedFace_getMeshNormals(ar_session_, ArAsFace(face), &normals, &norm_count);
+//        ArAugmentedFace_getMeshTextureCoordinates(ar_session_, ArAsFace(face), &uvs, &uv_count);
+        ArAugmentedFace_getMeshTriangleIndices(ar_session_, ArAsFace(face), &indices, &tri_count);
+
+//        float data[7] = {0, 0, 0, 1, 0, 0, 0};
+        glm::mat4 model_mat;
+        ArPose *ar_pose;
+        ArPose_create(ar_session_, nullptr, &ar_pose);
+        ArAugmentedFace_getCenterPose(ar_session_, ArAsFace(face), ar_pose);
+//        ArPose_getPoseRaw(ar_session_, ar_pose, data);
+        ArPose_getMatrix(ar_session_, ar_pose, glm::value_ptr(model_mat));
+        face_renderer->Draw(proj_mat*view_mat*model_mat, v_count, vertices, tri_count, indices);
+        ArPose_destroy(ar_pose);
+        ArTrackable_release(face);
+    }
+    ArTrackableList_destroy(faces);
+}
 void arController::update_and_draw_planes(){
     // Update and render planes.
     ArTrackableList* plane_list = nullptr;
     ArTrackableList_create(ar_session_, &plane_list);
     CHECK(plane_list != nullptr);
 
-    ArTrackableType plane_tracked_type = AR_TRACKABLE_PLANE;
-    ArSession_getAllTrackables(ar_session_, plane_tracked_type, plane_list);
+    ArSession_getAllTrackables(ar_session_, AR_TRACKABLE_PLANE, plane_list);
 
     int32_t plane_list_size = 0;
     ArTrackableList_getSize(ar_session_, plane_list, &plane_list_size);
